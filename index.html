@@ -8,7 +8,8 @@
   <style>
     html, body { margin:0; padding:0; background:#000; color:#fff; font-family:'Press Start 2P', monospace; height:100%; overflow:hidden; user-select:none; }
     canvas { display:block; margin:0 auto; background:#000; image-rendering: pixelated; }
-    #ui { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; padding:8px 12px; font-size:12px; pointer-events:none; }
+    #ui { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px; padding:8px 12px; font-size:12px; pointer-events:none; }
+    #hint { background:#fff; color:#000; padding:2px 6px; border:1px solid #000; border-radius:4px; max-width:80%; line-height:1.2; white-space:normal; text-align:right; }
     #btnReplay { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); padding:12px 18px; background:#fff; color:#000; border:2px solid #fff; border-radius:4px; cursor:pointer; display:none; font-family:'Press Start 2P', monospace; font-size:12px; }
   </style>
 </head>
@@ -16,7 +17,7 @@
   <canvas id="game" width="480" height="720"></canvas>
   <div id="ui">
     <div id="score">SCORE: 0</div>
-    <div id="hint">Reach your cake after 5 hurdles • Press SPACE / Tap</div>
+    <div id="hint">Blow the cake after 5 hurdles • Press SPACE / Tap</div>
   </div>
   <button id="btnReplay">RETRY?</button>
 
@@ -86,6 +87,7 @@
     lastTime = performance.now();
     document.getElementById('btnReplay').style.display = 'none';
     document.getElementById('score').textContent = 'SCORE: 0';
+    document.getElementById('hint').style.display = 'none';
     loop(lastTime);
   }
 
@@ -165,6 +167,8 @@
     const btn = document.getElementById('btnReplay');
     btn.style.display = 'block';
     btn.textContent = won ? 'HAPPY BIRTHDAY JOSH — YOU WIN! BLOW IT OUT SO WE CAN EAT IT!' : 'GAME OVER – RETRY?';
+    // show hint again so instructions are visible over black bg
+    document.getElementById('hint').style.display = 'block';
   }
 
   // ------------------ Render ------------------
@@ -253,13 +257,43 @@
   console.assert(circleRectCollide(10,10,2,0,0,3,3) === false, 'circleRectCollide basic miss');
 
   // ------------------ Start Screen ------------------
+  // Draw a black box behind intro text so nothing gets clipped/hidden
+  const introLines = [
+    { txt: 'FLAPPY CAKE', size: 20 },
+    { txt: 'Go get it! Clear 5 hurdles first.', size: 12 },
+    { txt: 'Press SPACE / Tap', size: 12 }
+  ];
+  // compute total height
+  let totalH = 0; introLines.forEach(l=> totalH += l.size + 6);
+  const boxTop = H/2 - totalH/2 - 6;
+  const boxHeight = totalH + 12;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, boxTop, W, boxHeight);
+
+  // render lines centered
+  let y = boxTop + 18;
+  ctx.textAlign = 'center';
+  introLines.forEach(l=>{
+    ctx.font = l.size + 'px "Press Start 2P"';
+    ctx.fillStyle = '#fff';
+    // manual wrap if too wide
+    const maxW = W - 40;
+    const words = l.txt.split(' ');
+    let line = '';
+    const drawWrapped = (str)=>{ ctx.fillText(str, W/2, y); y += l.size + 6; };
+    words.forEach(w=>{
+      const test = line ? line + ' ' + w : w;
+      if(ctx.measureText(test).width > maxW){ drawWrapped(line); line = w; }
+      else { line = test; }
+    });
+    if(line) drawWrapped(line);
+  });
+
+  // footer credit at very bottom
+  ctx.font = '10px "Press Start 2P"';
   ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
-  ctx.font = '20px "Press Start 2P"';
-  ctx.fillText('FLAPPY CAKE', W/2, H/2 - 60);
-  ctx.font = '12px "Press Start 2P"';
-  ctx.fillText('Reach your cake after 5 hurdles!', W/2, H/2 - 28);
-  ctx.fillText('Press SPACE / Tap', W/2, H/2);
+  ctx.fillText('Created by: the gal, the myth, the legend Shelvi', W/2, H - 24);
 
   // expose for console
   window.resetGame = reset;

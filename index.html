@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flappy Cake – Sans Edition</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin:0; padding:0; background:#000; color:#fff; font-family:'Press Start 2P', monospace; height:100%; overflow:hidden; user-select:none; }
+    canvas { display:block; margin:0 auto; background:#000; image-rendering: pixelated; }
+    #ui { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; padding:8px 12px; font-size:12px; pointer-events:none; }
+    #btnReplay { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); padding:12px 18px; background:#fff; color:#000; border:2px solid #fff; border-radius:4px; cursor:pointer; display:none; font-family:'Press Start 2P', monospace; font-size:12px; }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="480" height="720"></canvas>
+  <div id="ui">
+    <div id="score">SCORE: 0</div>
+    <div id="hint">Reach your cake after 5 hurdles • Press SPACE / Tap</div>
+  </div>
+  <button id="btnReplay">RETRY?</button>
+
+  <script>
+  // === Flappy Cake – Sans Edition ===
+  // Bugfix: removed stray "}" that prematurely closed update(); all braces now balanced.
+  // Cake now moves left like a pipe; touching its (expanded) hitbox triggers win.
+  // Keep: 5 hurdles, pixel font, black bg, gravity 0.175, flap -4.9, widened pipe gap.
+
+  // ------------------ Setup ------------------
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  const W = cvs.width;
+  const H = cvs.height;
+
+  // ------------------ Tunables ------------------
+  const GRAVITY = 0.175;          // gentler fall
+  const FLAP    = -4.9;           // softer bounce (30% less)
+  const PIPE_GAP = 230;           // easier gap
+  const PIPE_WIDTH = 70;
+  const PIPE_INTERVAL = 1700;     // ms
+  const GAME_SPEED = 2.2;
+  const MAX_PIPES = 5;            // hurdles before cake
+
+  // Cake hurdle
+  const CAKE_W = 140;
+  const CAKE_H = 140;
+  const WIN_MARGIN = 30;          // enlarge hitbox
+
+  // ------------------ Assets ------------------
+  const faceImg = new Image();
+  faceImg.crossOrigin = 'anonymous';
+  let faceReady = false, faceBroken = false;
+  faceImg.onload = () => { faceReady = true; };
+  faceImg.onerror = () => { faceBroken = true; console.warn('Face image failed to load, using fallback circle'); };
+  faceImg.src = 'https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/c3c992cc-63ed-4d82-9931-27612c27da52/d9udxh2-7e15ae0e-3796-4747-9263-5257949fa56c.png/v1/fill/w_1024,h_1024/sans_s_face__high_resolution_render__by_axis_strike_d9udxh2-fullview.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7ImhlaWdodCI6Ijw9MTAyNCIsInBhdGgiOiJcL2ZcL2MzYzk5MmNjLTYzZWQtNGQ4Mi05OTMxLTI3NjEyYzI3ZGE1MlwvZDl1ZHhoMi03ZTE1YWUwZS0zNzk2LTQ3NDctOTI2My01MjU3OTQ5ZmE1NmMucG5nIiwid2lkdGgiOiI8PTEwMjQifV1dLCJhdWQiOlsidXJuOnNlcnZpY2U6aW1hZ2Uub3BlcmF0aW9ucyJdfQ.EcTQrWK_lwhBUrtDv58yamPKqjSlOoSJBMBCmNLf4QQ';
+
+  // ------------------ State ------------------
+  let lastTime = 0, spawnTimer = 0;
+  let running = false, gameOver = false, reachedCake = false;
+  let score = 0, pipesPassed = 0;
+
+  const bird = { x:100, y:H/2, vy:0, r:22 };
+  const pipes = [];
+  const cake  = { x:null, y:H/2, w:CAKE_W, h:CAKE_H };
+
+  // ------------------ Input ------------------
+  window.addEventListener('keydown', e => { if(e.code === 'Space') flap(); });
+  window.addEventListener('touchstart', flap, { passive:false });
+  window.addEventListener('mousedown', flap);
+  document.getElementById('btnReplay').onclick = reset;
+
+  function flap(){
+    if(!running){ reset(); return; }
+    if(gameOver) return;
+    bird.vy = FLAP;
+  }
+
+  // ------------------ Core Loop ------------------
+  function reset(){
+    pipes.length = 0;
+    score = 0; pipesPassed = 0;
+    spawnTimer = 0;
+    bird.x = 100; bird.y = H/2; bird.vy = 0;
+    running = true; gameOver = false; reachedCake = false;
+    cake.x = null; // will spawn later
+    lastTime = performance.now();
+    document.getElementById('btnReplay').style.display = 'none';
+    document.getElementById('score').textContent = 'SCORE: 0';
+    loop(lastTime);
+  }
+
+  function loop(t){
+    if(!running) return;
+    const dt = t - lastTime; lastTime = t;
+    update(dt);
+    draw();
+    if(running) requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    if(gameOver) return;
+
+    // Spawn pipes until 5
+    spawnTimer += dt;
+    if(spawnTimer > PIPE_INTERVAL && pipes.length < MAX_PIPES && !reachedCake){
+      spawnTimer = 0;
+      const topHeight = 50 + Math.random() * (H - PIPE_GAP - 200);
+      const bottomY = topHeight + PIPE_GAP;
+      pipes.push({ x: W + 40, top: topHeight, bottomY, passed:false });
+    }
+
+    // Bird physics
+    bird.vy += GRAVITY;
+    bird.y  += bird.vy;
+
+    // Ceiling / floor
+    if(bird.y + bird.r > H || bird.y - bird.r < 0){ endGame(); return; }
+
+    // Move & score pipes
+    for(let i = pipes.length-1; i >= 0; i--){
+      const p = pipes[i];
+      p.x -= GAME_SPEED;
+
+      if(!p.passed && p.x + PIPE_WIDTH < bird.x){
+        p.passed = true;
+        score++; pipesPassed++;
+        document.getElementById('score').textContent = 'SCORE: ' + score;
+        if(pipesPassed >= MAX_PIPES){ reachedCake = true; }
+      }
+      if(p.x + PIPE_WIDTH < -50) pipes.splice(i,1);
+    }
+
+    // Pipe collisions
+    for(const p of pipes){
+      if(circleRectCollide(bird.x, bird.y, bird.r, p.x, 0, PIPE_WIDTH, p.top) ||
+         circleRectCollide(bird.x, bird.y, bird.r, p.x, p.bottomY, PIPE_WIDTH, H - p.bottomY)){
+        endGame();
+        return;
+      }
+    }
+
+    // Cake spawn & collision
+    if(reachedCake){
+      if(cake.x == null){
+        cake.x = W + 60 + cameraX(); // off-screen right
+      } else {
+        cake.x -= GAME_SPEED;        // slide left toward bird
+      }
+
+      if(circleRectCollide(
+          bird.x, bird.y, bird.r,
+          cake.x - cake.w/2 - WIN_MARGIN,
+          cake.y - cake.h/2 - WIN_MARGIN,
+          cake.w + WIN_MARGIN*2,
+          cake.h + WIN_MARGIN*2
+      )){
+        endGame(true);
+        return;
+      }
+    }
+  }
+
+  function endGame(won=false){
+    gameOver = true; running = false;
+    const btn = document.getElementById('btnReplay');
+    btn.style.display = 'block';
+    btn.textContent = won ? 'HAPPY BIRTHDAY JOSH — YOU WIN! BLOW IT OUT SO WE CAN EAT IT!' : 'GAME OVER – RETRY?';
+  }
+
+  // ------------------ Render ------------------
+  function cameraX(){ return bird.x - 100; }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // Cake
+    if(cake.x != null){ drawCake(cake.x - cameraX(), cake.y); }
+
+    // Pipes
+    ctx.fillStyle = '#fff';
+    pipes.forEach(p => {
+      const x = p.x - cameraX();
+      ctx.fillRect(x, 0, PIPE_WIDTH, p.top);
+      ctx.fillRect(x, p.bottomY, PIPE_WIDTH, H - p.bottomY);
+    });
+
+    // Bird
+    drawFace(bird.x - cameraX(), bird.y);
+
+    // Ground
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, H-18, W, 18);
+  }
+
+  function drawFace(x,y){
+    const size = bird.r * 2.2;
+    if(faceReady && !faceBroken && faceImg.naturalWidth > 0){
+      ctx.drawImage(faceImg, Math.round(x-size/2), Math.round(y-size/2), size, size);
+    }else{
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(x,y,bird.r,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawCake(x,y){
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.imageSmoothingEnabled = false;
+
+    // --- Visible cake (blue / white / blue) ---
+    // optional faint hitbox guide (remove fill or lower alpha if you don't want to see it)
+    // ctx.globalAlpha = 0.0; // uncomment to hide hitbox rectangle
+    ctx.fillStyle = '#0000ff'; // base blue layer
+    ctx.fillRect(-CAKE_W/2, -CAKE_H/2, CAKE_W, CAKE_H); // hitbox visual (kept blue)
+    // reset alpha if changed
+    // ctx.globalAlpha = 1;
+
+    // Actual cake layers (pixel-ish)
+    // bottom blue
+    ctx.fillStyle = '#1e88ff';
+    ctx.fillRect(-35, 22, 70, 18);
+    // middle white
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-32, 6, 64, 16);
+    // top blue
+    ctx.fillStyle = '#1e88ff';
+    ctx.fillRect(-28, -10, 56, 14);
+
+    // candle (yellow) & flame (yellow/orange)
+    ctx.fillStyle = '#ffeb3b'; // candle body
+    ctx.fillRect(-3, -28, 6, 12);
+    ctx.fillStyle = '#ffd54f'; // flame
+    ctx.fillRect(-1, -34, 2, 6);
+
+    ctx.restore();
+  }
+
+  // ------------------ Utils ------------------
+  function circleRectCollide(cx, cy, r, rx, ry, rw, rh){
+    const closestX = Math.max(rx, Math.min(cx, rx + rw));
+    const closestY = Math.max(ry, Math.min(cy, ry + rh));
+    const dx = cx - closestX; const dy = cy - closestY;
+    return (dx*dx + dy*dy) < r*r;
+  }
+
+  // ------------------ Lightweight Tests ------------------
+  console.assert(typeof drawFace === 'function', 'drawFace should exist');
+  console.assert(W === cvs.width && H === cvs.height, 'W/H should match canvas size');
+  console.assert(typeof circleRectCollide === 'function', 'collision fn exists');
+  console.assert(typeof drawCake === 'function', 'drawCake should exist');
+  // basic collision tests
+  console.assert(circleRectCollide(0,0,5,-2,-2,4,4) === true,  'circleRectCollide basic hit');
+  console.assert(circleRectCollide(10,10,2,0,0,3,3) === false, 'circleRectCollide basic miss');
+
+  // ------------------ Start Screen ------------------
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = '20px "Press Start 2P"';
+  ctx.fillText('FLAPPY CAKE', W/2, H/2 - 60);
+  ctx.font = '12px "Press Start 2P"';
+  ctx.fillText('Reach your cake after 5 hurdles!', W/2, H/2 - 28);
+  ctx.fillText('Press SPACE / Tap', W/2, H/2);
+
+  // expose for console
+  window.resetGame = reset;
+  </script>
+</body>
+</html>
